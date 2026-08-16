@@ -6,6 +6,9 @@ import argparse
 from io import BytesIO
 from PIL.PngImagePlugin import PngImageFile
 import dataclasses
+import contextlib
+import io
+from collections import Counter
 
 # pip install pdf2image
 import pdf2image
@@ -33,7 +36,11 @@ def convert_image_to_base64_image(image: PngImageFile) -> str:
 def convert_to_obsidian(remarkable_file:dict, excalidrawFileForBackground:ExcalidrawFile) -> str:
     with open(remarkable_file['remarkable'], 'rb') as f:
         blocks = read_blocks(f)
-        excalidrawDocument = blocks_to_excalidraw(blocks)
+        # The legacy exporter prints one line for every stroke and every block it
+        # cannot represent. A normal notebook can contain tens of thousands of
+        # strokes, so keep routine sync output readable.
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            excalidrawDocument = blocks_to_excalidraw(blocks)
 
         if excalidrawFileForBackground:
             # Add the file to document
@@ -145,26 +152,53 @@ def get_ExcalidrawFile_to_use_as_background(remarkable: dict, remarkables_direct
     return ExcalidrawFile(mimeType="image/png", dataURL= convert_image_to_base64_image(background_image))
 
 def app(remarkables_directory, vault_directory) -> None:
+    os.makedirs(vault_directory, exist_ok=True)
     uuids = get_uuids_to_process(remarkables_directory)
 
     remarkables = remarkables_to_convert(uuids, remarkables_directory)
+    converted = 0
+    skipped = 0
+    skipped_reasons = Counter()
+    skipped_examples = {}
 
     for remarkable in remarkables:
-        ExcalidrawFileAsBackground = None
+        try:
+            ExcalidrawFileAsBackground = None
 
-        print("reading: "+remarkable['remarkable'])
+            if remarkable["background"] and remarkable["pagenumber"]:
+                ExcalidrawFileAsBackground = get_ExcalidrawFile_to_use_as_background(remarkable, remarkables_directory)
 
-        if remarkable["background"] and remarkable["pagenumber"]:
-            ExcalidrawFileAsBackground = get_ExcalidrawFile_to_use_as_background(remarkable, remarkables_directory)
+            obsidian_markdown = convert_to_obsidian(remarkable, ExcalidrawFileAsBackground)
 
-        obsidian_markdown = convert_to_obsidian(remarkable, ExcalidrawFileAsBackground)
+            file_path = "{vault_directory}/{filename}-page-{pagenumber}.excalidraw.md".format(
+                vault_directory=vault_directory,
+                filename=remarkable["filename"],
+                pagenumber=remarkable["pagenumber"],
+            )
+            with open(file_path, 'w') as f:
+                f.write(obsidian_markdown)
+            converted += 1
+        except Exception as error:
+            skipped += 1
+            reason = "{error_type}: {error}".format(
+                error_type=type(error).__name__,
+                error=error,
+            )
+            skipped_reasons[reason] += 1
+            skipped_examples.setdefault(reason, remarkable['remarkable'])
 
-        file_path = "{vault_directory}/{filename}-page-{pagenumber}.md".format(vault_directory = vault_directory,
-                                                                             filename=remarkable["filename"],
-                                                                             pagenumber=remarkable["pagenumber"])
-        with open(file_path, 'w') as f:
-            print("writing: "+file_path)
-            f.write(obsidian_markdown)
+    print("summary: converted={converted} skipped={skipped}".format(converted=converted, skipped=skipped))
+    for reason, count in skipped_reasons.most_common():
+        print(
+            "skipped {count}: {reason}; example={example}".format(
+                count=count,
+                reason=reason,
+                example=skipped_examples[reason],
+            )
+        )
+
+    if converted == 0:
+        raise RuntimeError("No reMarkable pages could be converted")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog='Remarkable To Obsidian Synchronization',
@@ -174,4 +208,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     app(args.input_dir, args.output_dir)
-

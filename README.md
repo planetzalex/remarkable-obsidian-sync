@@ -109,6 +109,24 @@ Run the container with the paths to your remarkable files and where you want the
 docker run  -v <path_to_remarkables>:/app/remarkables:ro -v <path_to_dir_in_vault>:/app/vault ros
 ```
 
+### Container-free macOS sync
+
+The included `sync-remarkable.sh` script copies the tablet's notebook store over
+SSH and converts every compatible page into an `.excalidraw.md` file. It expects
+passwordless SSH access to `root@10.11.99.1` and a Python environment at
+`.venv313` by default.
+
+```sh
+python3 -m venv .venv313
+.venv313/bin/pip install pdf2image \
+  'git+https://github.com/EelcovanVeldhuizen/rmc.git@Excalidraw'
+./sync-remarkable.sh
+```
+
+Override `REMARKABLE_HOST`, `REMARKABLE_VAULT`, `REMARKABLE_PYTHON`, or
+`REMARKABLE_POPPLER_BIN` when the local paths differ. Legacy version-5 pages are
+reported and skipped instead of aborting the entire sync.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- CONTRIBUTING -->
